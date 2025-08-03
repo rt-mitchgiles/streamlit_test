@@ -3,6 +3,8 @@ import pandas as pd
 import openai
 import matplotlib.pyplot as plt
 import os
+from openai import OpenAI
+
 
 # --- CONFIGURATION ---
 st.set_page_config(page_title="Cycling Performance Analyzer", layout="wide")
@@ -17,6 +19,9 @@ if not openai_api_key:
     st.stop()
 
 openai.api_key = openai_api_key
+
+client = OpenAI(api_key=openai_api_key)
+
 
 # --- LOAD DATA FROM FILE ---
 DATA_PATH = "data/all_intervals_data.csv"
@@ -88,7 +93,7 @@ Weekly data:
 if st.button("Analyze with GPT-4o"):
     try:
         with st.spinner("Analyzing performance with GPT-4o..."):
-            response = openai.ChatCompletion.create(
+            response = client.chat.completions.create(
                 model="gpt-4o",
                 messages=[
                     {"role": "system", "content": "You are a cycling performance expert."},
@@ -96,6 +101,6 @@ if st.button("Analyze with GPT-4o"):
                 ]
             )
             st.success("Analysis complete")
-            st.markdown(response["choices"][0]["message"]["content"])
+            st.markdown(response.choices[0].message.content)
     except Exception as e:
         st.error(f"API error: {e}")
