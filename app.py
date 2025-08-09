@@ -36,16 +36,13 @@ config = {
     }
 }
 
-# Place authenticator.login OUTSIDE of 'with st.sidebar:'
-st.sidebar.title('User Login')
-authenticator = Authenticate(
+# FIX: Use 'main' as location and render in main area, or use 'sidebar' but DO NOT include st.sidebar.title etc. Use only one.
+name, authentication_status, username = Authenticate(
     config['credentials'],
     config['cookie']['name'],
     config['cookie']['key'],
     config['cookie']['expiry_days']
-)
-# This must be outside any sidebar block! Location is 'sidebar' so authenticator manages sidebar itself
-name, authentication_status, username = authenticator.login('Login', 'sidebar')
+).login('Login', 'main')  # Use 'main' for main area, or 'sidebar' for sidebar ONLY
 
 if not authentication_status:
     if authentication_status is False:
