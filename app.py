@@ -7,12 +7,12 @@ from io import StringIO
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+from streamlit_authenticator import Authenticate
+import yaml
 
 # --- SECTION 0: Easy Authentication ---
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 
-from streamlit_authenticator import Authenticate
-import yaml
 
 # Define users (for demo; in production use env vars or db)
 USERS = [
