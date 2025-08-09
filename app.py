@@ -36,7 +36,6 @@ DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 openai_api_key = st.secrets["OPENAI_API_KEY"]
 icu_api_key = st.secrets["intervals_api_key"]
-# athlete_id is now from mapping
 
 @st.cache_data
 def load_and_preprocess(file_path):
@@ -54,11 +53,36 @@ def load_and_preprocess(file_path):
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
-# Load data for this user
-# (In real scenario, filter df by athlete_id if multi-user file)
+# Fetch the latest workouts from intervals.icu for the past 7 days
+@st.cache_data
+def fetch_workouts(athlete_id, api_key, days=7):
+    end_date = datetime.today().strftime(DATE_FORMAT)
+    start_date = (datetime.today() - timedelta(days=days)).strftime(DATE_FORMAT)
+    url = (
+        f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar"
+        f"?date_from={start_date}&date_to={end_date}"
+    )
+    headers = {"Authorization": f"Bearer {api_key}"}
+    response = requests.get(url, headers=headers)
+    if response.ok:
+        raw_data = response.json()
+        st.write("🔍 Raw API response:", raw_data)
+        return pd.DataFrame(raw_data)
+    else:
+        st.error(f"Failed to fetch workouts: {response.status_code} {response.text}")
+        return pd.DataFrame()
+
+# Load workouts and data
 df, weekly_summary = load_and_preprocess(DATA_PATH)
+workouts_df = fetch_workouts(athlete_id, icu_api_key)
 
 # --- SECTION 2: Display Data & Trends ---
+st.subheader("🏋️ Recent Workouts (Last 7 Days)")
+if not workouts_df.empty:
+    st.dataframe(workouts_df)
+else:
+    st.info("No workouts found for the past 7 days.")
+
 st.header(f"🚴‍♂️ Weekly Summary for {username}")
 st.dataframe(weekly_summary)
 
