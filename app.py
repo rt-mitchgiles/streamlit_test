@@ -8,7 +8,52 @@ from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 
-# Load Intervals.icu data
+# --- SECTION 0: Easy Authentication ---
+st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
+
+from streamlit_authenticator import Authenticate
+import yaml
+
+# Define users (for demo; in production use env vars or db)
+USERS = [
+    {'name': 'Mitchell Giles', 'username': 'mitchell', 'password': 'pass123'},
+    {'name': 'Demo User', 'username': 'user', 'password': 'pass'}
+]
+
+# Create YAML config (in-memory for demo)
+config = {
+    'credentials': {
+        'usernames': {
+            u['username']: {'name': u['name'], 'password': u['password']} for u in USERS
+        }
+    },
+    'cookie': {
+        'expiry_days': 1,
+        'key': 'cycling-auth',
+        'name': 'cycling-auth-cookie'
+    },
+    'preauthorized': {
+        'emails': []
+    }
+}
+
+with st.sidebar:
+    st.title('User Login')
+
+    authenticator = Authenticate(
+        config['credentials'],
+        config['cookie']['name'],
+        config['cookie']['key'],
+        config['cookie']['expiry_days']
+    )
+    name, authentication_status, username = authenticator.login('Login', 'main')
+
+if not authentication_status:
+    if authentication_status is False:
+        st.error('Invalid username or password')
+    st.stop()
+
+# --- SECTION 1: Load and preprocess the data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 
@@ -16,8 +61,6 @@ openai_api_key = st.secrets["OPENAI_API_KEY"]
 icu_api_key = st.secrets["intervals_api_key"]
 athlete_id = st.secrets["athlete_id"]
 
-
-# --- SECTION 1: Load and preprocess the data ---
 @st.cache_data
 def load_and_preprocess_data(file_path):
     df = pd.read_csv(file_path, parse_dates=["Date"])
