@@ -14,7 +14,6 @@ import json
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 st.title("🔑 Welcome to the Cycling Performance Analyzer")
 
-
 @st.cache_data
 def load_user_mapping(path="user_mapping.json"):
     with open(path, 'r') as f:
@@ -22,23 +21,22 @@ def load_user_mapping(path="user_mapping.json"):
 
 mapping = load_user_mapping()
 
-
 username = st.text_input("Enter your username to continue")
 if not username:
     st.info("Please enter your username above to access your data.")
     st.stop()
 
 athlete_id = mapping.get(username)
-
-# Greet the user (replace this with lookup logic as needed)
-st.success(f"Hello, {username}, {athlete_id}! Loading your cycling data...")
+if athlete_id is None:
+    st.error(f"Username '{username}' not found.")
+    st.stop()
 
 # --- SECTION 1: Load & Preprocess Data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 openai_api_key = st.secrets["OPENAI_API_KEY"]
 icu_api_key = st.secrets["intervals_api_key"]
-athlete_id = st.secrets["athlete_id"]  # could map username → athlete_id in real template
+# athlete_id is now from mapping
 
 @st.cache_data
 def load_and_preprocess(file_path):
@@ -56,6 +54,8 @@ def load_and_preprocess(file_path):
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
+# Load data for this user
+# (In real scenario, filter df by athlete_id if multi-user file)
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Display Data & Trends ---
@@ -97,7 +97,7 @@ Include Date,Name,Duration,Intensity,Notes in CSV format only.
     )
     plan_csv = response.choices[0].message.content
     st.text_area("Your 4-Week Training Plan (CSV)", plan_csv, height=200)
-    st.session_state["plan_csv"] = plan_csv
+    st.session_state['plan_csv'] = plan_csv
 
 # --- SECTION 4: Upload to Intervals.icu ---
 st.header("🔗 Upload Plan to Intervals.icu")
@@ -109,15 +109,13 @@ if st.button("Upload Plan"):
         try:
             plan_df = pd.read_csv(StringIO(plan_input))
             plan_df["Date"] = pd.to_datetime(plan_df["Date"]).dt.strftime(DATE_FORMAT)
-            payload = []
-            for r in plan_df.itertuples():
-                payload.append({
-                    "date": r.Date,
-                    "name": r.Name,
-                    "duration": int(r.Duration),
-                    "intensity": float(r.Intensity),
-                    "description": r.Notes
-                })
+            payload = [{
+                "date": r.Date,
+                "name": r.Name,
+                "duration": int(r.Duration),
+                "intensity": float(r.Intensity),
+                "description": r.Notes
+            } for r in plan_df.itertuples()]
             resp = requests.post(
                 f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar",
                 headers={"Authorization": f"Bearer {icu_api_key}", "Content-Type": "application/json"},
