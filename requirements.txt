@@ -4,3 +4,4 @@ matplotlib
 openai
 requests
 streamlit-authenticator>=0.2.3
+json

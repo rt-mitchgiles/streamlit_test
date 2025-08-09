@@ -7,19 +7,31 @@ from io import StringIO
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
+import json
 
 # --- SECTION 0: Username Input Template ---
 # Simple page to enter a username and tailor content accordingly
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 st.title("🔑 Welcome to the Cycling Performance Analyzer")
 
+
+@st.cache_data
+def load_user_mapping(path="user_mapping.json"):
+    with open(path, 'r') as f:
+        return json.load(f)
+
+mapping = load_user_mapping()
+
+
 username = st.text_input("Enter your username to continue")
 if not username:
     st.info("Please enter your username above to access your data.")
     st.stop()
 
+athlete_id = mapping.get(username)
+
 # Greet the user (replace this with lookup logic as needed)
-st.success(f"Hello, {username}! Loading your cycling data...")
+st.success(f"Hello, {username}, {athlete_id}! Loading your cycling data...")
 
 # --- SECTION 1: Load & Preprocess Data ---
 DATA_PATH = "data/all_intervals_data.csv"
