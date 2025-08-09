@@ -7,46 +7,31 @@ from io import StringIO
 from datetime import datetime, timedelta
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
-from streamlit_authenticator import Authenticate
-import yaml
 
-# --- SECTION 0: Easy Authentication ---
+# --- SECTION 0: Built-in Authentication (no extra packages) ---
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 
-# Define users (for demo; in production use env vars or db)
-USERS = [
-    {'name': 'Mitchell Giles', 'username': 'mitchell', 'password': 'pass123'},
-    {'name': 'Demo User', 'username': 'user', 'password': 'pass'}
-]
+# Load credentials from Streamlit secrets (define in .streamlit/secrets.toml)
+# Example secrets.toml:
+# username = "mitchell"
+# password = "securepass"
+USERNAME = st.secrets.get("username")
+PASSWORD = st.secrets.get("password")
 
-# Create YAML config (in-memory for demo)
-config = {
-    'credentials': {
-        'usernames': {
-            u['username']: {'name': u['name'], 'password': u['password']} for u in USERS
-        }
-    },
-    'cookie': {
-        'expiry_days': 1,
-        'key': 'cycling-auth',
-        'name': 'cycling-auth-cookie'
-    },
-    'preauthorized': {
-        'emails': []
-    }
-}
+if "logged_in" not in st.session_state:
+    st.session_state.logged_in = False
 
-# FIX: Use 'main' as location and render in main area, or use 'sidebar' but DO NOT include st.sidebar.title etc. Use only one.
-name, authentication_status, username = Authenticate(
-    config['credentials'],
-    config['cookie']['name'],
-    config['cookie']['key'],
-    config['cookie']['expiry_days']
-).login('Login', 'main')  # Use 'main' for main area, or 'sidebar' for sidebar ONLY
-
-if not authentication_status:
-    if authentication_status is False:
-        st.error('Invalid username or password')
+if not st.session_state.logged_in:
+    st.title("🔒 Login")
+    user = st.text_input("Username")
+    pwd = st.text_input("Password", type="password")
+    if st.button("Login"):
+        if user == USERNAME and pwd == PASSWORD:
+            st.session_state.logged_in = True
+            st.success("Login successful!")
+            st.experimental_rerun()
+        else:
+            st.error("Invalid username or password.")
     st.stop()
 
 # --- SECTION 1: Load and preprocess the data ---
@@ -59,7 +44,9 @@ athlete_id = st.secrets["athlete_id"]
 
 @st.cache_data
 def load_and_preprocess_data(file_path):
+    # Load raw data
     df = pd.read_csv(file_path, parse_dates=["Date"])
+    # Rename for convenience
     df = df.rename(columns={
         "Date": "date",
         "Avg Power": "avg_power",
@@ -69,10 +56,13 @@ def load_and_preprocess_data(file_path):
         "Fatigue": "atl",
         "Form": "tsb"
     })
+    # Compute week start
     df["week"] = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
-    weekly = df.groupby("week")[["avg_power", "avg_hr", "tss", "ctl", "atl", "tsb"]].mean().reset_index()
+    # Aggregate weekly means
+    weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
+# Load data
 df, weekly_summary = load_and_preprocess_data(DATA_PATH)
 
 # --- SECTION 2: Display data and metrics ---
@@ -98,11 +88,8 @@ st.pyplot(fig)
 st.subheader("🧠 GPT-4o Performance Analysis and Training Plan")
 
 run_analysis = st.button("Analyze and Generate Plan")
-
-if run_analysis and openai_api_key:
+if run_analysis:
     client = OpenAI(api_key=openai_api_key)
-
-    # Convert summary to string table
     summary_csv = weekly_summary.to_csv(index=False)
     prompt = f"""
     You are a professional cycling coach analyzing recent training performance.
@@ -120,81 +107,48 @@ if run_analysis and openai_api_key:
 
     Based on this data:
 
-    1. Briefly assess the user's performance, fatigue and fitness balance.
-    2. Generate a structured **4-week cycling training plan** with 3–5 workouts per week.
-    3. For each workout, include the following fields:
-    - `Date` (starting next Monday)
-    - `Name` (e.g. "Endurance Ride", "Sweet Spot Intervals")
-    - `Duration` (in minutes)
-    - `Intensity` (as % of FTP)
-    - `Notes` (short workout description)
+    1. Briefly assess performance, fatigue, and fitness balance.
+    2. Generate a structured 4-week cycling training plan with 3–5 workouts per week.
+    3. For each workout, include Date (next Monday start), Name, Duration (min), Intensity (%FTP), Notes.
 
-    **Important**: Output the training plan as a valid comma-separated table (CSV format), with no Markdown formatting or bullet points. Use these headers exactly:
-
-    `Date,Name,Duration,Intensity,Notes`
-
-    Start with the training plan immediately. Do not explain or describe it — only output the table.
+    Output as CSV with headers: Date,Name,Duration,Intensity,Notes. No markdown.
     """
-
     response = client.chat.completions.create(
         model="gpt-4o",
         messages=[
-            {"role": "system", "content": "You are a professional cycling coach."},
-            {"role": "user", "content": prompt}
+            {"role":"system","content":"You are a professional cycling coach."},
+            {"role":"user","content":prompt}
         ]
     )
-
-    gpt_reply = response.choices[0].message.content
-    st.markdown("### 📋 GPT-4o Analysis and Plan")
-    st.markdown(gpt_reply)
-
-    st.session_state["gpt_plan_raw"] = gpt_reply
+    plan_csv = response.choices[0].message.content
+    st.markdown("### 📋 GPT-4o Training Plan")
+    st.code(plan_csv, language='csv')
+    st.session_state["gpt_plan_raw"] = plan_csv
 
 # --- SECTION 4: Upload to Intervals.icu ---
 st.subheader("🔗 Upload Plan to Intervals.icu")
-
-with st.expander("Paste in the GPT-generated training plan table if it appeared above"):
-    user_pasted_table = st.text_area("Paste the full table here (Markdown or CSV-style)")
-
-def parse_training_plan(text):
-    try:
-        table_io = StringIO(text)
-        plan_df = pd.read_csv(table_io)
-        plan_df.columns = [col.strip() for col in plan_df.columns]
-        plan_df["Date"] = pd.to_datetime(plan_df["Date"]).dt.strftime(DATE_FORMAT)
-        return plan_df
-    except Exception as e:
-        st.error(f"Failed to parse training plan: {e}")
-        return None
-
-def upload_to_intervals_icu(plan_df, api_key, athlete_id):
-    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    payload = []
-    for _, row in plan_df.iterrows():
-        payload.append({
-            "date": row["Date"],
-            "name": row["Name"],
-            "duration": int(row["Duration"]),
-            "intensity": float(row["Intensity"]),
-            "description": row["Notes"]
-        })
-    response = requests.post(url, headers=headers, json=payload)
-    if response.status_code == 200:
-        return "✅ Successfully uploaded the training plan!"
-    else:
-        return f"❌ Upload failed: {response.status_code} — {response.text}"
-
-if st.button("📤 Upload to Intervals.icu"):
+with st.expander("Paste the GPT-generated plan CSV here to upload"):
+    user_pasted_table = st.text_area("CSV table")
+if st.button("Upload to Intervals.icu"):
     if not user_pasted_table:
-        st.warning("You need to paste the GPT training table above first.")
-    elif not icu_api_key or not athlete_id:
-        st.warning("You must enter your Intervals.icu API key and Athlete ID.")
+        st.warning("Paste the plan first!")
     else:
-        plan_df = parse_training_plan(user_pasted_table)
-        if plan_df is not None:
-            result = upload_to_intervals_icu(plan_df, icu_api_key, athlete_id)
-            st.success(result)
+        try:
+            plan_df = pd.read_csv(StringIO(user_pasted_table))
+            plan_df["Date"] = pd.to_datetime(plan_df["Date"]).dt.strftime(DATE_FORMAT)
+            payload = [
+                {"date":r.Date, "name":r.Name, "duration":int(r.Duration),
+                 "intensity":float(r.Intensity), "description":r.Notes}
+                for r in plan_df.itertuples()
+            ]
+            resp = requests.post(
+                f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar",
+                headers={"Authorization":f"Bearer {icu_api_key}","Content-Type":"application/json"},
+                json=payload
+            )
+            if resp.ok:
+                st.success("Plan uploaded successfully!")
+            else:
+                st.error(f"Upload failed: {resp.status_code} {resp.text}")
+        except Exception as e:
+            st.error(f"Error parsing/uploading plan: {e}")
