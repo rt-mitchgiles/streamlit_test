@@ -46,7 +46,7 @@ with st.sidebar:
         config['cookie']['key'],
         config['cookie']['expiry_days']
     )
-    name, authentication_status, username = authenticator.login('Login', 'main')
+    name, authentication_status, username = authenticator.login('Login', 'sidebar')
 
 if not authentication_status:
     if authentication_status is False:
