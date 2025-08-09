@@ -53,13 +53,14 @@ def load_and_preprocess(file_path):
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
-# Fetch the latest workouts from intervals.icu for the past 7 days
+# Fetch the latest calendar events (workouts and other events) from intervals.icu for the past 7 days
 @st.cache_data
 def fetch_workouts(athlete_id, api_key, days=7):
-    end_date = datetime.today().strftime(DATE_FORMAT)
-    start_date = (datetime.today() - timedelta(days=days)).strftime(DATE_FORMAT)
+    end_date = datetime.utcnow().date().isoformat()
+    start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
+    # Use the events endpoint to list calendar events for the athlete
     url = (
-        f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar"
+        f"https://intervals.icu/api/v1/athlete/{athlete_id}/events"
         f"?date_from={start_date}&date_to={end_date}"
     )
     headers = {"Authorization": f"Bearer {api_key}"}
@@ -69,10 +70,14 @@ def fetch_workouts(athlete_id, api_key, days=7):
         st.write("🔍 Raw API response:", raw_data)
         return pd.DataFrame(raw_data)
     else:
-        st.error(f"Failed to fetch workouts: {response.status_code} {response.text}")
+        st.error(f"Failed to fetch events: {response.status_code} {response.text}")
         return pd.DataFrame()
 
 # Load workouts and data
+df, weekly_summary = load_and_preprocess(DATA_PATH)
+workouts_df = fetch_workouts(athlete_id, icu_api_key)
+
+# --- SECTION 2: Display Data & Trends ---
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 workouts_df = fetch_workouts(athlete_id, icu_api_key)
 
