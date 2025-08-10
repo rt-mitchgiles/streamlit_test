@@ -1,5 +1,8 @@
 {
-  "mitchell": "i259850",
-  "alice": "67890",
-  "bob": "24680"
+  "username": {
+    "athlete_id": "i259850",
+    "access_token": "",
+    "refresh_token": "",
+    "token_expires_at": ""
+  }
 }
