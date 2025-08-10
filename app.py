@@ -10,17 +10,16 @@ import matplotlib.dates as mdates
 import json
 
 # --- SECTION 0: Username Input Template ---
-# Simple page to enter a username and tailor content accordingly
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 st.title("🔑 Welcome to the Cycling Performance Analyzer")
 
 @st.cache_data
 def load_user_mapping(path="user_mapping.json"):
+    """Load the mapping of usernames to athlete IDs from a JSON file."""
     with open(path, 'r') as f:
         return json.load(f)
 
 mapping = load_user_mapping()
-
 username = st.text_input("Enter your username to continue")
 if not username:
     st.info("Please enter your username above to access your data.")
@@ -31,7 +30,7 @@ if athlete_id is None:
     st.error(f"Username '{username}' not found.")
     st.stop()
 
-# --- SECTION 1: Load & Preprocess Data ---
+# --- SECTION 1: Load & Preprocess CSV Data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 openai_api_key = st.secrets["OPENAI_API_KEY"]
@@ -39,6 +38,7 @@ icu_api_key = st.secrets["intervals_api_key"]
 
 @st.cache_data
 def load_and_preprocess(file_path):
+    """Load CSV, rename columns, and compute weekly summary."""
     df = pd.read_csv(file_path, parse_dates=["Date"])
     df = df.rename(columns={
         "Date": "date",
@@ -53,41 +53,50 @@ def load_and_preprocess(file_path):
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
-# Fetch the latest calendar events (workouts and other events) from intervals.icu for the past 7 days
-@st.cache_data
+df, weekly_summary = load_and_preprocess(DATA_PATH)
+
+# --- SECTION 2: Fetch Workouts via Intervals.icu API ---
 def fetch_workouts(athlete_id, api_key, days=7):
-    end_date = datetime.utcnow().date().isoformat()
+    """Fetch recent workouts from the athlete's calendar endpoint."""
     start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
-    # Use the events endpoint to list calendar events for the athlete
+    end_date = datetime.utcnow().date().isoformat()
     url = (
-        f"https://intervals.icu/api/v1/athlete/{athlete_id}/events"
+        f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar"
         f"?date_from={start_date}&date_to={end_date}"
     )
     headers = {"Authorization": f"Bearer {api_key}"}
-    response = requests.get(url, headers=headers)
-    if response.ok:
-        raw_data = response.json()
-        st.write("🔍 Raw API response:", raw_data)
-        return pd.DataFrame(raw_data)
+    try:
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        st.write("🔍 Raw API response:", data)
+        return pd.DataFrame(data)
+    except requests.HTTPError as he:
+        st.error(f"HTTP error fetching workouts: {he}")
+    except Exception as e:
+        st.error(f"Error fetching workouts: {e}")
+    return pd.DataFrame()
+
+# --- SECTION 3: UI for Loading and Displaying Workouts ---
+if st.button("Load Recent Workouts"):
+    with st.spinner("Fetching workouts from Intervals.icu..."):
+        workouts_df = fetch_workouts(athlete_id, icu_api_key)
+    if workouts_df.empty:
+        st.info("No workouts found or error occurred.")
     else:
-        st.error(f"Failed to fetch events: {response.status_code} {response.text}")
-        return pd.DataFrame()
+        st.subheader("🏋️ Recent Workouts (Last 7 Days)")
+        st.dataframe(workouts_df)
+        # Identify new workouts not in CSV
+        workouts_df['workout_date'] = pd.to_datetime(workouts_df['date']).dt.date
+        csv_dates = set(df['date'].dt.date)
+        new_activities = workouts_df[~workouts_df['workout_date'].isin(csv_dates)]
+        if not new_activities.empty:
+            st.subheader("🆕 New Workouts (not in CSV)")
+            st.dataframe(new_activities)
+        else:
+            st.info("No new workouts since last data load.")
 
-# Load workouts and data
-df, weekly_summary = load_and_preprocess(DATA_PATH)
-workouts_df = fetch_workouts(athlete_id, icu_api_key)
-
-# --- SECTION 2: Display Data & Trends ---
-df, weekly_summary = load_and_preprocess(DATA_PATH)
-workouts_df = fetch_workouts(athlete_id, icu_api_key)
-
-# --- SECTION 2: Display Data & Trends ---
-st.subheader("🏋️ Recent Workouts (Last 7 Days)")
-if not workouts_df.empty:
-    st.dataframe(workouts_df)
-else:
-    st.info("No workouts found for the past 7 days.")
-
+# --- SECTION 4: Display Weekly Summary and Trends ---
 st.header(f"🚴‍♂️ Weekly Summary for {username}")
 st.dataframe(weekly_summary)
 
@@ -102,7 +111,7 @@ ax.legend()
 plt.xticks(rotation=45)
 st.pyplot(fig)
 
-# --- SECTION 3: GPT-4o Analysis & Plan ---
+# --- SECTION 5: GPT-4o Analysis & Plan ---
 st.header("🧠 GPT-4o Performance Analysis and Training Plan")
 if st.button("Generate 4-Week Plan"):
     summary_csv = weekly_summary.to_csv(index=False)
@@ -128,7 +137,7 @@ Include Date,Name,Duration,Intensity,Notes in CSV format only.
     st.text_area("Your 4-Week Training Plan (CSV)", plan_csv, height=200)
     st.session_state['plan_csv'] = plan_csv
 
-# --- SECTION 4: Upload to Intervals.icu ---
+# --- SECTION 6: Upload to Intervals.icu ---
 st.header("🔗 Upload Plan to Intervals.icu")
 plan_input = st.text_area("Paste the CSV plan here to upload")
 if st.button("Upload Plan"):
@@ -150,9 +159,7 @@ if st.button("Upload Plan"):
                 headers={"Authorization": f"Bearer {icu_api_key}", "Content-Type": "application/json"},
                 json=payload
             )
-            if resp.ok:
-                st.success("Plan uploaded successfully!")
-            else:
-                st.error(f"Upload failed: {resp.status_code} {resp.text}")
+            resp.raise_for_status()
+            st.success("Plan uploaded successfully!")
         except Exception as e:
             st.error(f"Error: {e}")
