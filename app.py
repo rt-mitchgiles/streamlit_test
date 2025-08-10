@@ -25,19 +25,19 @@ if not username:
     st.info("Please enter your username above to access your data.")
     st.stop()
 
-athlete_id = mapping.get(username)
-if athlete_id is None:
+athlete_id_raw = mapping.get(username)
+if athlete_id_raw is None:
     st.error(f"Username '{username}' not found.")
     st.stop()
-
-# Default athlete ID for apikey if not found
-athlete_id = '0'
+# Strip non-digits just in case
+athlete_id = ''.join(filter(str.isdigit, athlete_id_raw))
+st.write(f"Using athlete_id: {athlete_id}")
 
 # --- SECTION 1: Load & Preprocess CSV Data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 openai_api_key = st.secrets["OPENAI_API_KEY"]
-icu_api_key = st.secrets["intervals_api_key"]
+icu_api_key    = st.secrets["intervals_api_key"]
 
 @st.cache_data
 def load_and_preprocess(file_path):
@@ -58,16 +58,17 @@ def load_and_preprocess(file_path):
 
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
-# --- SECTION 2: Fetch Workouts via Intervals.icu API ---
-def fetch_workouts(athlete_id, api_key, days=7):
-    """Fetch recent workouts from the athlete's calendar endpoint."""
+# --- SECTION 2: Fetch Activities via Intervals.icu API ---
+def fetch_activities(athlete_id, api_key, days=7):
+    """Fetch recent activities from the athlete's activities endpoint."""
     start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
-    end_date = datetime.utcnow().date().isoformat()
+    end_date   = datetime.utcnow().date().isoformat()
     url = (
-        f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar"
-        f"?date_from={start_date}&date_to={end_date}"
+        f"https://intervals.icu/api/v1/activities"
+        f"?athlete={athlete_id}&date_from={start_date}&date_to={end_date}"
     )
     headers = {"Authorization": f"Bearer {api_key}"}
+    st.write(f"🔗 Fetch URL: {url}")
     try:
         resp = requests.get(url, headers=headers, timeout=10)
         resp.raise_for_status()
@@ -75,29 +76,30 @@ def fetch_workouts(athlete_id, api_key, days=7):
         st.write("🔍 Raw API response:", data)
         return pd.DataFrame(data)
     except requests.HTTPError as he:
-        st.error(f"HTTP error fetching workouts: {he}")
+        st.error(f"HTTP error fetching activities: {he}")
     except Exception as e:
-        st.error(f"Error fetching workouts: {e}")
+        st.error(f"Error fetching activities: {e}")
     return pd.DataFrame()
 
-# --- SECTION 3: UI for Loading and Displaying Workouts ---
-if st.button("Load Recent Workouts"):
-    with st.spinner("Fetching workouts from Intervals.icu..."):
-        workouts_df = fetch_workouts(athlete_id, icu_api_key)
-    if workouts_df.empty:
-        st.info("No workouts found or error occurred.")
+# --- SECTION 3: UI for Loading and Displaying Activities ---
+if st.button("Load Recent Activities"):
+    with st.spinner("Fetching activities from Intervals.icu..."):
+        activities_df = fetch_activities(athlete_id, icu_api_key)
+    if activities_df.empty:
+        st.info("No activities found or error occurred.")
     else:
-        st.subheader("🏋️ Recent Workouts (Last 7 Days)")
-        st.dataframe(workouts_df)
-        # Identify new workouts not in CSV
-        workouts_df['workout_date'] = pd.to_datetime(workouts_df['date']).dt.date
-        csv_dates = set(df['date'].dt.date)
-        new_activities = workouts_df[~workouts_df['workout_date'].isin(csv_dates)]
-        if not new_activities.empty:
-            st.subheader("🆕 New Workouts (not in CSV)")
-            st.dataframe(new_activities)
-        else:
-            st.info("No new workouts since last data load.")
+        st.subheader("🚴 Recent Activities (Last 7 Days)")
+        st.dataframe(activities_df)
+        # Identify new activities not in CSV data
+        if 'date' in activities_df.columns:
+            activities_df['act_date'] = pd.to_datetime(activities_df['date']).dt.date
+            csv_dates = set(df['date'].dt.date)
+            new_acts = activities_df[~activities_df['act_date'].isin(csv_dates)]
+            if not new_acts.empty:
+                st.subheader("🆕 New Activities (not in CSV)")
+                st.dataframe(new_acts)
+            else:
+                st.info("No new activities since last data load.")
 
 # --- SECTION 4: Display Weekly Summary and Trends ---
 st.header(f"🚴‍♂️ Weekly Summary for {username}")
