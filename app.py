@@ -66,7 +66,7 @@ def fetch_activities(athlete_id, api_key):
     st.write(f"🔗 Fetch URL: {url}")
     try:
         # Personal API key uses HTTP Basic Auth: username=api_key, password empty
-        resp = requests.get(url, auth=(api_key, ""), timeout=10)
+        resp = requests.get(url, auth=("API_KEY", api_key), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         st.write("🔍 API JSON response:", data)
