@@ -6,7 +6,7 @@
     "token_expires_at": null,
     "oauth": {
       "state": "",
-      "code": "44a73ced16bb17320fd5ebf4c1d67dc65804e496",
+      "code": "",
       "scope": "read,activity:read_all"
     }
   }
