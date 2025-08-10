@@ -59,10 +59,10 @@ def load_and_preprocess(file_path):
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
-def fetch_activities(athlete_id, api_key, count=5):
+def fetch_activities(athlete_id, api_key):
     """Fetch the `count` most recent activities via the JSON endpoint."""
     # Use the JSON activities endpoint with .json extension and limit parameter
-    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities.json?limit={count}"
+    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest=2025-08-04"
     st.write(f"🔗 Fetch URL: {url}")
     try:
         # Personal API key uses HTTP Basic Auth: username=api_key, password empty
