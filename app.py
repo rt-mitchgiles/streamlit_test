@@ -9,13 +9,13 @@ import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 import json
 
-# --- SECTION 0: Username Input Template ---
+# --- SECTION 0: Username Input & Mapping (includes Strava tokens) ---
 st.set_page_config(page_title="Cycling Performance Analyzer", page_icon="🚴‍♂️")
 st.title("🔑 Welcome to the Cycling Performance Analyzer")
 
 @st.cache_data
 def load_user_mapping(path="user_mapping.json"):
-    """Load the mapping of usernames to athlete IDs from a JSON file."""
+    """Load username→credentials mapping (athlete_id & tokens)"""
     with open(path, 'r') as f:
         return json.load(f)
 
@@ -25,79 +25,107 @@ if not username:
     st.info("Please enter your username above to access your data.")
     st.stop()
 
-athlete_id_raw = mapping.get(username)
-if athlete_id_raw is None:
+user_info = mapping.get(username)
+if user_info is None:
     st.error(f"Username '{username}' not found.")
     st.stop()
-# Strip non-digits just in case
-athlete_id = ''.join(filter(str.isdigit, athlete_id_raw))
-st.write(f"Using athlete_id: {athlete_id}")
+
+# Expect mapping entries like:
+# {"username": {"athlete_id": 12345, "access_token": "...", "refresh_token": "...", "token_expires_at": 1691702400 }}
+athlete_id = user_info.get("athlete_id")
+access_token = user_info.get("access_token")
+refresh_token = user_info.get("refresh_token")
+token_expires_at = user_info.get("token_expires_at")
 
 # --- SECTION 1: Load & Preprocess CSV Data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
 openai_api_key = st.secrets["OPENAI_API_KEY"]
-icu_api_key    = st.secrets["intervals_api_key"]
 
 @st.cache_data
 def load_and_preprocess(file_path):
-    """Load CSV, rename columns, and compute weekly summary."""
     df = pd.read_csv(file_path, parse_dates=["Date"])
-    df = df.rename(columns={
-        "Date": "date",
-        "Avg Power": "avg_power",
-        "Avg HR": "avg_hr",
-        "Load": "tss",
-        "Fitness": "ctl",
-        "Fatigue": "atl",
-        "Form": "tsb"
-    })
+    df = df.rename(columns={"Date": "date", "Avg Power": "avg_power", "Avg HR": "avg_hr",
+                             "Load": "tss", "Fitness": "ctl", "Fatigue": "atl", "Form": "tsb"})
     df["week"] = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
-#  SAVE GIT HERE FOR QUERYING INTERVALIS ICU DATA
-# --- SECTION 2: Fetch Activities via Intervals.icu API ---
-def fetch_activities(athlete_id, api_key):
-    """Fetch the `count` most recent activities via the JSON endpoint."""
-    # Use the JSON activities endpoint with .json extension and limit parameter
-    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?oldest=2025-08-04"
-    st.write(f"🔗 Fetch URL: {url}")
-    try:
-        # Personal API key uses HTTP Basic Auth: username=api_key, password empty
-        resp = requests.get(url, auth=("API_KEY", api_key), timeout=10)
+# --- SECTION 2: Strava OAuth Helpers & Fetch Activities ---
+def refresh_strava_token(client_id, client_secret, refresh_token):
+    resp = requests.post(
+        "https://www.strava.com/oauth/token",
+        data={
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token
+        }
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+@st.cache_data
+def get_valid_access_token(user_info):
+    now_ts = int(datetime.utcnow().timestamp())
+    if now_ts > user_info['token_expires_at']:
+        creds = refresh_strava_token(
+            st.secrets['STRAVA_CLIENT_ID'],
+            st.secrets['STRAVA_CLIENT_SECRET'],
+            user_info['refresh_token']
+        )
+        # update mapping locally
+        user_info.update({
+            'access_token': creds['access_token'],
+            'refresh_token': creds['refresh_token'],
+            'token_expires_at': creds['expires_at']
+        })
+    return user_info['access_token']
+
+
+def fetch_strava_activities(access_token, after=None, before=None):
+    url = "https://www.strava.com/api/v3/athlete/activities"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    params = {'per_page':200, 'page':1}
+    if after:
+        params['after'] = int(after.timestamp())
+    if before:
+        params['before'] = int(before.timestamp())
+    all_acts = []
+    while True:
+        resp = requests.get(url, headers=headers, params=params, timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        st.write("🔍 API JSON response:", data)
-        # Convert list of activities to DataFrame
-        return pd.DataFrame(data)
-    except requests.HTTPError as he:
-        st.error(f"HTTP error fetching activities JSON: {he}{resp.text}")
-    except Exception as e:
-        st.error(f"Error fetching activities: {e}")
-    return pd.DataFrame()
+        if not data:
+            break
+        all_acts.extend(data)
+        params['page'] += 1
+    return pd.DataFrame(all_acts)
 
 # --- SECTION 3: UI for Loading and Displaying Activities ---
 if st.button("Load Recent Activities"):
-    with st.spinner("Fetching activities from Intervals.icu..."):
-        activities_df = fetch_activities("0", icu_api_key)
+    with st.spinner("Fetching activities from Strava..."):
+        valid_token = get_valid_access_token(user_info)
+        # e.g. last 7 days
+        now = datetime.utcnow()
+        week_ago = now - timedelta(days=7)
+        activities_df = fetch_strava_activities(valid_token, after=week_ago)
     if activities_df.empty:
         st.info("No activities found or error occurred.")
     else:
         st.subheader("🚴 Recent Activities (Last 7 Days)")
         st.dataframe(activities_df)
         # Identify new activities not in CSV data
-        if 'date' in activities_df.columns:
-            activities_df['act_date'] = pd.to_datetime(activities_df['date']).dt.date
-            csv_dates = set(df['date'].dt.date)
-            new_acts = activities_df[~activities_df['act_date'].isin(csv_dates)]
-            if not new_acts.empty:
-                st.subheader("🆕 New Activities (not in CSV)")
-                st.dataframe(new_acts)
-            else:
-                st.info("No new activities since last data load.")
+        activities_df['act_date'] = pd.to_datetime(activities_df['start_date_local']).dt.date
+        csv_dates = set(df['date'].dt.date)
+        new_acts = activities_df[~activities_df['act_date'].isin(csv_dates)]
+        if not new_acts.empty:
+            st.subheader("🆕 New Activities (not in CSV)")
+            st.dataframe(new_acts)
+        else:
+            st.info("No new activities since last data load.")
 
 # --- SECTION 4: Display Weekly Summary and Trends ---
 st.header(f"🚴‍♂️ Weekly Summary for {username}")
@@ -140,7 +168,7 @@ Include Date,Name,Duration,Intensity,Notes in CSV format only.
     st.text_area("Your 4-Week Training Plan (CSV)", plan_csv, height=200)
     st.session_state['plan_csv'] = plan_csv
 
-# --- SECTION 6: Upload to Intervals.icu ---
+# --- SECTION 6: Upload Plan to Intervals.icu (remains unchanged) ---
 st.header("🔗 Upload Plan to Intervals.icu")
 plan_input = st.text_area("Paste the CSV plan here to upload")
 if st.button("Upload Plan"):
@@ -159,7 +187,8 @@ if st.button("Upload Plan"):
             } for r in plan_df.itertuples()]
             resp = requests.post(
                 f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar",
-                headers={"Authorization": f"Bearer {icu_api_key}", "Content-Type": "application/json"},
+                headers={"Authorization": f"Bearer {st.secrets['intervals_api_key']}",
+                         "Content-Type": "application/json"},
                 json=payload
             )
             resp.raise_for_status()
