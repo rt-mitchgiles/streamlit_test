@@ -59,14 +59,10 @@ def load_and_preprocess(file_path):
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
-def fetch_activities(athlete_id, api_key, days=7):
-    """Fetch recent activities from the athlete's activities endpoint using API key."""
-    start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
-    end_date   = datetime.utcnow().date().isoformat()
-    url = (
-        f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
-        f"?date_from={start_date}&date_to={end_date}"
-    )
+def fetch_activities(athlete_id, api_key, count=5):
+    """Fetch the `count` most recent activities for the athlete."""
+    # Use the limit parameter to get the most recent `count` activities
+    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?limit={count}"
     st.write(f"🔗 Fetch URL: {url}")
     try:
         resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
@@ -74,9 +70,14 @@ def fetch_activities(athlete_id, api_key, days=7):
         data = resp.json()
         st.write("🔍 Raw API response:", data)
         activities = data.get('activities', data)
-        return pd.DataFrame(activities)
+        df = pd.DataFrame(activities)
+        # If a date column exists, sort descending and take top `count`
+        if 'date' in df.columns:
+            df['__date_dt'] = pd.to_datetime(df['date'])
+            df = df.sort_values('__date_dt', ascending=False).head(count).drop(columns=['__date_dt'])
+        return df
     except requests.HTTPError as he:
-        st.error(f"HTTP error fetching activities: {he}")
+        st.error(f"HTTP error fetching activities: {he}{resp.text}")
     except Exception as e:
         st.error(f"Error fetching activities: {e}")
     return pd.DataFrame()
