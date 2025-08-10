@@ -58,6 +58,7 @@ def load_and_preprocess(file_path):
 
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
+#  SAVE GIT HERE FOR QUERYING INTERVALIS ICU DATA
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
 def fetch_activities(athlete_id, api_key):
     """Fetch the `count` most recent activities via the JSON endpoint."""
