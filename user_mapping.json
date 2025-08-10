@@ -1,8 +1,13 @@
 {
-  "username": {
-    "athlete_id": "i259850",
-    "access_token": "",
-    "refresh_token": "",
-    "token_expires_at": ""
+  "Mitchell": {
+    "athlete_id_intervals": "i259850",
+    "access_token": null,
+    "refresh_token": null,
+    "token_expires_at": null,
+    "oauth": {
+      "state": "",
+      "code": "44a73ced16bb17320fd5ebf4c1d67dc65804e496",
+      "scope": "read,activity:read_all"
+    }
   }
 }

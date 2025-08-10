@@ -18,21 +18,51 @@ def load_user_mapping(path="user_mapping.json"):
         return json.load(f)
 mapping = load_user_mapping()
 
-# 1) Input username
 username = st.text_input("Enter your username to continue")
 if not username:
     st.info("Please enter your username above to access your data.")
     st.stop()
 
-# 2) Look up user_info
 user_info = mapping.get(username)
 if user_info is None:
     st.error(f"Username '{username}' not found in mapping.")
     st.stop()
 
-# 3) If no refresh_token, start OAuth flow
-gosed_token = user_info.get("refresh_token")
-if not gosed_token:
+# Pull initial OAuth code from nested oauth object (if present)
+oauth = user_info.get("oauth", {})
+initial_code = oauth.get("code")
+
+# If we have an initial code but no refresh_token yet, exchange it now
+if initial_code and not user_info.get("refresh_token"):
+    try:
+        resp = requests.post(
+            "https://www.strava.com/oauth/token",
+            data={
+                "client_id":     st.secrets["STRAVA_CLIENT_ID"],
+                "client_secret": st.secrets["STRAVA_CLIENT_SECRET"],
+                "code":          initial_code,
+                "grant_type":    "authorization_code"
+            },
+            timeout=10
+        )
+        resp.raise_for_status()
+        creds = resp.json()
+        # Write back into our in-memory mapping
+        user_info.update({
+            "access_token":     creds["access_token"],
+            "refresh_token":    creds["refresh_token"],
+            "token_expires_at": creds["expires_at"],
+            "athlete_id":       creds["athlete"]["id"]
+        })
+        # Clear out the oauth.code field so we don’t re-use it
+        oauth.pop("code", None)
+        st.success("✅ Exchanged initial code for tokens. Please reload the app.")
+    except requests.HTTPError as err:
+        st.error(f"OAuth exchange failed: {err.response.text}")
+    st.stop()
+
+# If still no refresh_token, prompt user to authorize via link
+if not user_info.get("refresh_token"):
     params = {
         "client_id":      st.secrets["STRAVA_CLIENT_ID"],
         "response_type":  "code",
@@ -42,86 +72,61 @@ if not gosed_token:
     }
     auth_url = "https://www.strava.com/oauth/authorize?" + "&".join(f"{k}={v}" for k,v in params.items())
     st.markdown(f"[👉 Authorize with Strava]({auth_url})")
-
-    qs = st.experimental_get_query_params()
-    if "code" in qs:
-        code = qs["code"][0]
-        try:
-            resp = requests.post(
-                "https://www.strava.com/oauth/token",
-                data={
-                    "client_id":     st.secrets["STRAVA_CLIENT_ID"],
-                    "client_secret": st.secrets["STRAVA_CLIENT_SECRET"],
-                    "code":          code,
-                    "grant_type":    "authorization_code"
-                },
-                timeout=10
-            )
-            resp.raise_for_status()
-            creds = resp.json()
-            user_info.update({
-                "access_token":     creds["access_token"],
-                "refresh_token":    creds["refresh_token"],
-                "token_expires_at": creds["expires_at"],
-                "athlete_id":       creds["athlete"]["id"]
-            })
-            st.success("✅ Strava connected! Reload the app to fetch activities.")
-        except requests.HTTPError as err:
-            st.error(f"OAuth exchange failed: {err.response.text}")
     st.stop()
 
-# 4) Now read tokens for normal path
+# --- SECTION 1: Read tokens for normal path ---
 athlete_id       = user_info["athlete_id"]
-access_token     = user_info["access_token"]
-refresh_token    = user_info["refresh_token"]
-token_expires_at = user_info["token_expires_at"]
+# tokens for later:
+# user_info["access_token"], user_info["refresh_token"], user_info["token_expires_at"]
 
-# --- SECTION 1: Load & Preprocess CSV Data ---
-DATA_PATH = "data/all_intervals_data.csv"
+openai_api_key    = st.secrets["OPENAI_API_KEY"]
+intervals_api_key = st.secrets["intervals_api_key"]
+
+# --- SECTION 2: Load & Preprocess CSV Data ---
+DATA_PATH   = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
-openai_api_key = st.secrets["OPENAI_API_KEY"]
 
 @st.cache_data
 def load_and_preprocess(file_path):
     df = pd.read_csv(file_path, parse_dates=["Date"])
-    df = df.rename(columns={"Date": "date", "Avg Power": "avg_power", "Avg HR": "avg_hr",
-                             "Load": "tss", "Fitness": "ctl", "Fatigue": "atl", "Form": "tsb"})
+    df = df.rename(columns={
+        "Date": "date", "Avg Power": "avg_power", "Avg HR": "avg_hr",
+        "Load": "tss", "Fitness": "ctl", "Fatigue": "atl", "Form": "tsb"
+    })
     df["week"] = df["date"].dt.to_period("W").apply(lambda r: r.start_time)
     weekly = df.groupby("week")[['avg_power','avg_hr','tss','ctl','atl','tsb']].mean().reset_index()
     return df, weekly
 
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
-# --- SECTION 2: OAuth Helpers & Token Refresh ---
+# --- SECTION 3: OAuth Helpers & Token Refresh ---
 def refresh_strava_token(client_id, client_secret, refresh_token):
-    url = "https://www.strava.com/oauth/token"
-    data = {
-        "client_id":     client_id,
-        "client_secret": client_secret,
-        "grant_type":    "refresh_token",
-        "refresh_token": refresh_token
-    }
-    resp = requests.post(url, data=data, timeout=10)
+    resp = requests.post(
+        "https://www.strava.com/oauth/token",
+        data={
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "grant_type":    "refresh_token",
+            "refresh_token": refresh_token
+        },
+        timeout=10
+    )
     try:
         resp.raise_for_status()
     except requests.HTTPError:
-        st.error(f"Strava token refresh failed [{resp.status_code}]: {resp.text}")
+        st.error(f"Token refresh failed [{resp.status_code}]: {resp.text}")
         raise
     return resp.json()
-
 
 def get_valid_access_token(user_info):
     now_ts = int(datetime.utcnow().timestamp())
     expires = user_info.get('token_expires_at')
     if expires is None or now_ts > expires:
-        try:
-            creds = refresh_strava_token(
-                st.secrets['STRAVA_CLIENT_ID'],
-                st.secrets['STRAVA_CLIENT_SECRET'],
-                user_info['refresh_token']
-            )
-        except Exception:
-            st.stop()
+        creds = refresh_strava_token(
+            st.secrets['STRAVA_CLIENT_ID'],
+            st.secrets['STRAVA_CLIENT_SECRET'],
+            user_info['refresh_token']
+        )
         user_info.update({
             'access_token':     creds['access_token'],
             'refresh_token':    creds['refresh_token'],
@@ -129,7 +134,7 @@ def get_valid_access_token(user_info):
         })
     return user_info['access_token']
 
-# --- SECTION 3: Fetch & Display Activities ---
+# --- SECTION 4: Fetch & Display Activities ---
 def fetch_strava_activities(access_token, after=None, before=None):
     url = "https://www.strava.com/api/v3/athlete/activities"
     headers = {"Authorization": f"Bearer {access_token}"}
@@ -149,9 +154,9 @@ def fetch_strava_activities(access_token, after=None, before=None):
 
 if st.button("Load Recent Activities"):
     with st.spinner("Fetching activities from Strava..."):
-        valid_token = get_valid_access_token(user_info)
-        week_ago    = datetime.utcnow() - timedelta(days=7)
-        activities_df = fetch_strava_activities(valid_token, after=week_ago)
+        token      = get_valid_access_token(user_info)
+        week_ago   = datetime.utcnow() - timedelta(days=7)
+        activities_df = fetch_strava_activities(token, after=week_ago)
     if activities_df.empty:
         st.info("No activities found or error occurred.")
     else:
@@ -166,7 +171,7 @@ if st.button("Load Recent Activities"):
         else:
             st.info("No new activities since last data load.")
 
-# --- SECTION 4: Weekly Summary & Trends ---
+# --- SECTION 5: Weekly Summary & Trends ---
 st.header(f"🚴‍♂️ Weekly Summary for {username}")
 st.dataframe(weekly_summary)
 
@@ -181,7 +186,7 @@ ax.legend()
 plt.xticks(rotation=45)
 st.pyplot(fig)
 
-# --- SECTION 5: GPT-4o Plan Generation ---
+# --- SECTION 6: GPT-4o Analysis & Plan ---
 st.header("🧠 GPT-4o Performance Analysis and Training Plan")
 if st.button("Generate 4-Week Plan"):
     summary_csv = weekly_summary.to_csv(index=False)
@@ -195,19 +200,19 @@ Weekly CSV data:
 2. Create a 4-week cycling plan (3–5 workouts/week).
 Include Date,Name,Duration,Intensity,Notes in CSV format only.
 """
-    client   = OpenAI(api_key=openai_api_key)
-    response = client.chat.completions.create(
+    client = OpenAI(api_key=openai_api_key)
+    resp = client.chat.completions.create(
         model="gpt-4o",
         messages=[
             {"role":"system","content":"You are a professional cycling coach."},
             {"role":"user","content":prompt}
         ]
     )
-    plan_csv = response.choices[0].message.content
+    plan_csv = resp.choices[0].message.content
     st.text_area("Your 4-Week Training Plan (CSV)", plan_csv, height=200)
     st.session_state['plan_csv'] = plan_csv
 
-# --- SECTION 6: Upload Plan to Intervals.icu ---
+# --- SECTION 7: Upload Plan to Intervals.icu ---
 st.header("🔗 Upload Plan to Intervals.icu")
 plan_input = st.text_area("Paste the CSV plan here to upload")
 if st.button("Upload Plan"):
@@ -218,16 +223,18 @@ if st.button("Upload Plan"):
             plan_df = pd.read_csv(StringIO(plan_input))
             plan_df["Date"] = pd.to_datetime(plan_df["Date"]).dt.strftime(DATE_FORMAT)
             payload = [{
-                "date": r.Date,
-                "name": r.Name,
-                "duration": int(r.Duration),
-                "intensity": float(r.Intensity),
+                "date":        r.Date,
+                "name":        r.Name,
+                "duration":    int(r.Duration),
+                "intensity":   float(r.Intensity),
                 "description": r.Notes
             } for r in plan_df.itertuples()]
             resp = requests.post(
                 f"https://intervals.icu/api/v1/athlete/{athlete_id}/calendar",
-                headers={"Authorization": f"Bearer {st.secrets['intervals_api_key']}",
-                         "Content-Type": "application/json"},
+                headers={
+                    "Authorization": f"Bearer {intervals_api_key}",
+                    "Content-Type":  "application/json"
+                },
                 json=payload
             )
             resp.raise_for_status()
