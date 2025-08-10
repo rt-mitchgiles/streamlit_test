@@ -59,25 +59,22 @@ def load_and_preprocess(file_path):
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
-# --- SECTION 2: Fetch Activities via Intervals.icu API ---
-# --- SECTION 2: Fetch Activities via Intervals.icu API ---
-def fetch_activities(api_key, days=7):
-    """Fetch recent activities from the user's calendar using personal API key."""
-    # Use athlete ID '0' to indicate the API key's owner
+def fetch_activities(athlete_id, api_key, days=7):
+    """Fetch recent activities from the athlete's activities endpoint using API key."""
     start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
     end_date   = datetime.utcnow().date().isoformat()
     url = (
-        f"https://intervals.icu/api/v1/athlete/0/calendar"
+        f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities"
         f"?date_from={start_date}&date_to={end_date}"
     )
     st.write(f"🔗 Fetch URL: {url}")
     try:
-        # Use HTTP Basic Auth with API key as username
-        resp = requests.get(url, auth=(api_key, ""), timeout=10)
+        resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
         resp.raise_for_status()
         data = resp.json()
         st.write("🔍 Raw API response:", data)
-        return pd.DataFrame(data)
+        activities = data.get('activities', data)
+        return pd.DataFrame(activities)
     except requests.HTTPError as he:
         st.error(f"HTTP error fetching activities: {he}")
     except Exception as e:
