@@ -81,7 +81,7 @@ def fetch_activities(athlete_id, api_key):
 # --- SECTION 3: UI for Loading and Displaying Activities ---
 if st.button("Load Recent Activities"):
     with st.spinner("Fetching activities from Intervals.icu..."):
-        activities_df = fetch_activities(athlete_id, icu_api_key)
+        activities_df = fetch_activities("0", icu_api_key)
     if activities_df.empty:
         st.info("No activities found or error occurred.")
     else:
