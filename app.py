@@ -59,18 +59,21 @@ def load_and_preprocess(file_path):
 df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
-def fetch_activities(athlete_id, api_key, days=7):
-    """Fetch recent activities from the athlete's activities endpoint."""
+# --- SECTION 2: Fetch Activities via Intervals.icu API ---
+# --- SECTION 2: Fetch Activities via Intervals.icu API ---
+def fetch_activities(api_key, days=7):
+    """Fetch recent activities from the user's calendar using personal API key."""
+    # Use athlete ID '0' to indicate the API key's owner
     start_date = (datetime.utcnow().date() - timedelta(days=days)).isoformat()
     end_date   = datetime.utcnow().date().isoformat()
     url = (
-        f"https://intervals.icu/api/v1/activities"
-        f"?athlete={athlete_id}&date_from={start_date}&date_to={end_date}"
+        f"https://intervals.icu/api/v1/athlete/0/calendar"
+        f"?date_from={start_date}&date_to={end_date}"
     )
-    headers = {"Authorization": f"Bearer {api_key}"}
     st.write(f"🔗 Fetch URL: {url}")
     try:
-        resp = requests.get(url, headers=headers, timeout=10)
+        # Use HTTP Basic Auth with API key as username
+        resp = requests.get(url, auth=(api_key, ""), timeout=10)
         resp.raise_for_status()
         data = resp.json()
         st.write("🔍 Raw API response:", data)
