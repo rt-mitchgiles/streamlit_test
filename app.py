@@ -60,24 +60,20 @@ df, weekly_summary = load_and_preprocess(DATA_PATH)
 
 # --- SECTION 2: Fetch Activities via Intervals.icu API ---
 def fetch_activities(athlete_id, api_key, count=5):
-    """Fetch the `count` most recent activities for the athlete."""
-    # Use the limit parameter to get the most recent `count` activities
-    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities?limit={count}"
+    """Fetch the `count` most recent activities via the JSON endpoint."""
+    # Use the JSON activities endpoint with .json extension and limit parameter
+    url = f"https://intervals.icu/api/v1/athlete/{athlete_id}/activities.json?limit={count}"
     st.write(f"🔗 Fetch URL: {url}")
     try:
-        resp = requests.get(url, headers={"Authorization": f"Bearer {api_key}"}, timeout=10)
+        # Personal API key uses HTTP Basic Auth: username=api_key, password empty
+        resp = requests.get(url, auth=(api_key, ""), timeout=10)
         resp.raise_for_status()
         data = resp.json()
-        st.write("🔍 Raw API response:", data)
-        activities = data.get('activities', data)
-        df = pd.DataFrame(activities)
-        # If a date column exists, sort descending and take top `count`
-        if 'date' in df.columns:
-            df['__date_dt'] = pd.to_datetime(df['date'])
-            df = df.sort_values('__date_dt', ascending=False).head(count).drop(columns=['__date_dt'])
-        return df
+        st.write("🔍 API JSON response:", data)
+        # Convert list of activities to DataFrame
+        return pd.DataFrame(data)
     except requests.HTTPError as he:
-        st.error(f"HTTP error fetching activities: {he}{resp.text}")
+        st.error(f"HTTP error fetching activities JSON: {he}{resp.text}")
     except Exception as e:
         st.error(f"Error fetching activities: {e}")
     return pd.DataFrame()
