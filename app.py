@@ -30,6 +30,9 @@ if athlete_id is None:
     st.error(f"Username '{username}' not found.")
     st.stop()
 
+# Default athlete ID for apikey if not found
+athlete_id = '0'
+
 # --- SECTION 1: Load & Preprocess CSV Data ---
 DATA_PATH = "data/all_intervals_data.csv"
 DATE_FORMAT = "%Y-%m-%d"
