@@ -70,7 +70,9 @@ def refresh_strava_token(client_id, client_secret, refresh_token):
 @st.cache_data
 def get_valid_access_token(user_info):
     now_ts = int(datetime.utcnow().timestamp())
-    if now_ts > user_info['token_expires_at']:
+    token_expires_at = user_info.get('token_expires_at')
+    # If token_expires_at is missing or not an int, force refresh
+    if token_expires_at is None or not isinstance(token_expires_at, int) or now_ts > token_expires_at:
         creds = refresh_strava_token(
             st.secrets['STRAVA_CLIENT_ID'],
             st.secrets['STRAVA_CLIENT_SECRET'],
